@@ -10,12 +10,40 @@ import os
 import torch
 from torch import nn
 from torch.optim import Adam
+from torch.autograd import Variable
 
+# 在生成器最后加上残差块，用于生成低频图像并分解出高频图像
+class Residual_Block(nn.Module):
+    def __init__(self, i_channel, o_channel, stride=1):
+        super(Residual_Block, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels=i_channel, out_channels=3, kernel_size=3,
+                               stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(3)
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv2 = nn.Conv2d(in_channels=3, out_channels=o_channel, kernel_size=3,
+                               stride=1, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(o_channel)
+        self.tanh = nn.Tanh()
+
+    def forward(self, x):
+        residual = x
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        # 用生成图像减去高频图像得到低频图像，作为生成器的输出
+        out = residual - out
+        out = self.tanh(out)
+        return out
 
 # 定义图像生成模型
 class netG(nn.Module):
     def __init__(self):
         super(netG, self).__init__()
+        self.feature = Variable(torch.zeros(4, 1, 120, 120).cuda())
+
         self.block1 = nn.Sequential(
             nn.Conv2d(2, 256, 5), nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2))
@@ -36,14 +64,18 @@ class netG(nn.Module):
             nn.Conv2d(32, 1, 1), nn.Tanh()
         )
 
+        # 最后一层是残差块，用于生成低频结果
+        self.block6 = Residual_Block(1, 1)
+
     def forward(self, x):
         x = self.block1(x)
         x = self.block2(x)
         x = self.block3(x)
         x = self.block4(x)
         x = self.block5(x)
+        self.feature = x
+        x = self.block6(x)
         return x
-
 
 
 # 定义判别模型
@@ -75,7 +107,6 @@ class netD(nn.Module):
         x = x.view(x.size(0), -1)  # 将卷积结果拉伸成一列便于分类
         x = self.classifier(x)
         return x
-
 
 class CGAN(object):
     def __init__(self,
@@ -154,6 +185,7 @@ class CGAN(object):
                     batch_labels_ir = batch_labels_ir.permute(0, 3, 1, 2)
                     batch_labels_vi = batch_labels_vi.permute(0, 3, 1, 2)
 
+                    #  使用detach()截断梯度流
                     fusion_image = fusion_model(input_image).detach()  # 生成器生成的结果
                     loss_fn = torch.nn.MSELoss(reduce=True, size_average=True)  # 计算均方损失
                     counter += 1  # 用于统计与显示
@@ -173,7 +205,7 @@ class CGAN(object):
                         d_loss.backward()
                         optimizerD.step()
 
-                    ## train netd with fake img
+                    # train netd with fake img
                     fusion_model.zero_grad()
                     fusion_image = fusion_model(input_image)
                     neg_G = discriminator(fusion_image)  # 由训练后的判别器对伪造输入的判别结果

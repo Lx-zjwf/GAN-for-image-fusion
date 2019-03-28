@@ -49,13 +49,17 @@ def input_setup(index):
 
 
 # 加载模型参数进行图像融合测试
-fusion_model = netG().cuda()
-discriminator = netD().cuda()
-fusion_model.load_state_dict(torch.load('dcgan_netg.pth'))
-discriminator.load_state_dict(torch.load('dcgan_netd.pth'))
+fusion_model = netG().cuda().eval()
+# discriminator = netD().cuda()
+ep = 0
+model_path = os.path.join(os.getcwd(), 'WGAN_weight_0312', 'epoch' + str(ep))
+netG_path = os.path.join(model_path, 'WGAN_netG.pth')
+netD_path = os.path.join(model_path, 'WGAN_netD.pth')
+fusion_model.load_state_dict(torch.load(netG_path))
+# discriminator.load_state_dict(torch.load(netD_path))
 data_ir = prepare_data('Test_ir')
 data_vi = prepare_data('Test_vi')
-for i in range(len(data_ir)):
+for i in range(15, len(data_ir)):
     start = time.time()
     train_data_ir, train_data_vi = input_setup(i)
     # from_numpy得到的是DoubleTensor类型的，需要转成FloatTensor
@@ -63,11 +67,13 @@ for i in range(len(data_ir)):
     train_data_vi = torch.from_numpy(train_data_vi).float()
     input_image = torch.cat((train_data_ir, train_data_vi), -1)
     input_image = input_image.permute(0, 3, 1, 2)
-    result = fusion_model(input_image.cuda())
+    input_image = torch.autograd.Variable(input_image.cuda(), volatile=True)
+    result_low = fusion_model(input_image)
+    result = fusion_model.feature
     result = result * 127.5 + 127.5
     # 将生成的variable数据转成numpy类型
     result = result.squeeze().cpu().detach().numpy()
-    image_path = os.path.join(os.getcwd(), 'result')
+    image_path = os.path.join(os.getcwd(), 'WGAN_test_result', 'epoch' + str(ep))
     if not os.path.exists(image_path):
         os.makedirs(image_path)
     if i <= 9:
