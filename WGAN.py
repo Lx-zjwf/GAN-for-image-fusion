@@ -6,6 +6,7 @@ import os
 from torch import nn
 from torch.optim import Adam
 import torch.nn.functional as F
+from model import Bottleneck, stand_loss
 
 # begin training
 print('begin training, be patient')
@@ -92,12 +93,12 @@ class FusionGAN(object):
         train_data_ir, train_label_ir = read_data(data_dir_ir)
         train_data_vi, train_label_vi = read_data(data_dir_vi)
 
-        npad = 16
         lda = 5
+        npad = 16
         counter = 0
 
         # 定义参数的更新方式（D和G分开训练）,需要用到的损失函数
-        fusion_model = netG()
+        fusion_model = netG(Bottleneck)
         discriminator = netD()
         optimizerG = Adam(fusion_model.parameters(), lr=opt.learning_rate, betas=(opt.beta1, 0.999))
         optimizerD = Adam(discriminator.parameters(), lr=opt.learning_rate, betas=(opt.beta1, 0.999))
@@ -115,6 +116,13 @@ class FusionGAN(object):
         # print(" [*] Load SUCCESS")
         # else:
         # print(" [!] Load failed...")
+
+        # 加载预训练模型
+        # net_path = os.path.join(os.getcwd(), 'WGAN_weight_0401', 'epoch1')
+        # netG_path = os.path.join(net_path, 'WGAN_netG.pth')
+        # netD_path = os.path.join(net_path, 'WGAN_netD.pth')
+        # fusion_model.load_state_dict(torch.load(netG_path))
+        # discriminator.load_state_dict(torch.load(netD_path))
 
         # 模型训练
         if opt.is_train:
@@ -149,9 +157,9 @@ class FusionGAN(object):
 
                     counter += 1  # 用于统计与显示
                     # 生成器每训练一次，判别器训练两次
-                    for i in range(5):
+                    for i in range(1):
                         # ----- train netd -----
-                        discriminator.zero_grad()
+                        # discriminator.zero_grad()
                         ## train netd with real img
                         # 分别计算正样本和负样本的分类损失
                         pos = discriminator(combine_label_high)
@@ -164,38 +172,46 @@ class FusionGAN(object):
                         fusion_high = fusion_image - fusion_low
                         # 判别网络对高频图谱进行分类
                         neg = discriminator(fusion_high)
-                        pos_param = torch.autograd.Variable((torch.randn(self.batch_size, 1) * 0.5 + 0.7).cuda())  # 定义一组随机数
-                        pos_loss = dis_loss(pos, pos_param)
-                        neg_param = torch.autograd.Variable((torch.randn(self.batch_size, 1) * 0.3).cuda())  # 定义一组随机数
-                        neg_loss = dis_loss(neg, neg_param)
+                        pos_param = torch.autograd.Variable((torch.ones(self.batch_size, 1)).cuda())  # 定义一组随机数
+                        pos_loss = criterion(pos, pos_param)
+                        neg_param = torch.autograd.Variable((torch.zeros(self.batch_size, 1)).cuda())  # 定义一组随机数
+                        neg_loss = criterion(neg, neg_param)
                         d_loss = neg_loss + pos_loss
+                        optimizerD.zero_grad()
                         d_loss.backward()
                         optimizerD.step()
 
                     # train netd with fake img
-                    fusion_model.zero_grad()
+                    # fusion_model.zero_grad()
                     fusion_low = fusion_model(input_image)
                     # 将融合后的图像分解成高频和低频
                     fusion_image = fusion_model.feature
                     fusion_high = fusion_image - fusion_low
                     neg_G = discriminator(fusion_high)  # 由训练后的判别器对伪造输入的判别结果
                     g_param_1 = torch.autograd.Variable((torch.randn(self.batch_size, 1) * 0.5 + 0.7).cuda())
-                    g_loss_1 = dis_loss(neg_G, g_param_1)
+                    g_loss_1 = criterion(neg_G, g_param_1)
                     # 生成器损失函数：生成图像的低频部分与原始图像低频部分的分布差异（交叉熵）
                     # 交叉熵代入的数据必须为正数，所以需要先对输入数据进行sigmoid分类
-                    fusion_low = F.sigmoid(fusion_low)
-                    label_ir_low = F.sigmoid(label_ir_low)
-                    label_vi_low = F.sigmoid(label_vi_low)
-                    g_loss_2 = 0.6 * criterion(fusion_low, label_ir_low) + \
-                               0.4 * criterion(fusion_low, label_vi_low)
-                    g_loss_total = g_loss_1 + g_loss_2
+                    # fusion_low = F.sigmoid(fusion_low)
+                    # label_ir_low = F.sigmoid(label_ir_low)
+                    # label_vi_low = F.sigmoid(label_vi_low)
+                    g_loss_2 = 0.5 * dis_loss(fusion_low, label_ir_low) + \
+                               0.5 * dis_loss(fusion_low, label_ir_low)
+                    # 计算图像标准差损失
+                    loss_3 = stand_loss()
+                    g_loss_3 = loss_3(fusion_low) / 4.0
+                    g_loss_total = g_loss_2
+                    optimizerG.zero_grad()
                     g_loss_total.backward()
                     optimizerG.step()
+                    # 查看生成模型的网络参数，同 fusion_model.block5[0].weight.grad
+                    params = list(fusion_model.parameters())
+                    # print(params[16].grad)
 
                     if counter % 10 == 0:
                         print("Epoch: [%2d], step: [%2d], loss_d: [%.8f],loss_g:[%.8f]"
                               % ((ep + 1), counter, d_loss, g_loss_total))
-                model_path = os.path.join(os.getcwd(), 'WGAN_weight_0312', 'epoch' + str(ep))
+                model_path = os.path.join(os.getcwd(), 'WGAN_weight_0401', 'epoch' + str(ep))
                 if not os.path.exists(model_path):
                     os.makedirs(model_path)
                 netD_path = os.path.join(model_path, 'WGAN_netD.pth')

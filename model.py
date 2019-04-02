@@ -11,26 +11,95 @@ import torch
 from torch import nn
 from torch.optim import Adam
 from torch.autograd import Variable
+import numpy
+
+# 定义残差瓶颈块
+class Bottleneck(nn.Module):
+    expansion = 2
+
+    def __init__(self, inplanes, planes, stride=1, downsample=None):
+        super(Bottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(planes)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
+                               padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(planes)
+        # 定义瓶颈层
+        self.conv3 = nn.Conv2d(planes, planes * self.expansion, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm2d(planes * self.expansion)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x):
+        residual = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            residual = self.downsample(x)
+
+        out += residual
+        out = self.relu(out)
+
+        return out
+
 
 # 在生成器最后加上残差块，用于生成低频图像并分解出高频图像
 class Residual_Block(nn.Module):
-    def __init__(self, i_channel, o_channel, stride=1):
+
+    def __init__(self, i_channel, o_channel, block, stride=1):
         super(Residual_Block, self).__init__()
+        self.inplanes = 32
         self.conv1 = nn.Conv2d(in_channels=i_channel, out_channels=3, kernel_size=3,
                                stride=stride, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(3)
         self.relu = nn.ReLU(inplace=True)
+
+        # self.layer1 = self._make_layer(block, self.inplanes)
 
         self.conv2 = nn.Conv2d(in_channels=3, out_channels=o_channel, kernel_size=3,
                                stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(o_channel)
         self.tanh = nn.Tanh()
 
+    def _make_layer(self, block, planes, stride=1):
+        downsample = None
+
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes * block.expansion),
+            )
+        layers = []
+        # 如果残差块增大了原输入的维度，通过1*1的瓶颈层使两个相加层维度保持一致
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes * block.expansion
+        # 将输出降维至符号网络的维度
+        for i in range(1, 3):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+
     def forward(self, x):
         residual = x
         out = self.conv1(x)
         out = self.bn1(out)
         out = self.relu(out)
+
+        # 加入残差块
+        # out = self.layer1(out)
+
         out = self.conv2(out)
         out = self.bn2(out)
         # 用生成图像减去高频图像得到低频图像，作为生成器的输出
@@ -42,8 +111,6 @@ class Residual_Block(nn.Module):
 class netG(nn.Module):
     def __init__(self):
         super(netG, self).__init__()
-        self.feature = Variable(torch.zeros(4, 1, 120, 120).cuda())
-
         self.block1 = nn.Sequential(
             nn.Conv2d(2, 256, 5), nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2))
@@ -64,8 +131,45 @@ class netG(nn.Module):
             nn.Conv2d(32, 1, 1), nn.Tanh()
         )
 
+        # 加入一个残差块
+        # self.inplanes = 64
+        # self.reslayer1 = self._make_layer(block, self.inplanes)
+
+        # 对模型进行压缩
+        # self.block4 = nn.Sequential(
+        #     nn.Conv2d(128, 64, 1), nn.BatchNorm2d(64),
+        #     nn.LeakyReLU(0.2))
+
+        # self.inplanes = 32
+        # self.reslayer2 = self._make_layer(block, self.inplanes)
+
+        # self.block6 = nn.Sequential(
+        #     nn.Conv2d(64, 32, 1), nn.BatchNorm2d(32),
+        #     nn.LeakyReLU(0.2))
+
         # 最后一层是残差块，用于生成低频结果
-        self.block6 = Residual_Block(1, 1)
+        # self.block4 = Residual_Block(1, 1, block)
+
+
+    def _make_layer(self, block, planes, stride=1):
+        downsample = None
+
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                nn.Conv2d(self.inplanes, planes * block.expansion,
+                          kernel_size=1, stride=stride, bias=False),
+                nn.BatchNorm2d(planes * block.expansion),
+            )
+        layers = []
+        # 如果残差块增大了原输入的维度，通过1*1的瓶颈层降低计算量（downsample）
+        layers.append(block(self.inplanes, planes, stride, downsample))
+        self.inplanes = planes * block.expansion
+        # 将输出降维至符号网络的维度
+        for i in range(1, 2):
+            layers.append(block(self.inplanes, planes))
+
+        return nn.Sequential(*layers)
+
 
     def forward(self, x):
         x = self.block1(x)
@@ -73,9 +177,11 @@ class netG(nn.Module):
         x = self.block3(x)
         x = self.block4(x)
         x = self.block5(x)
-        self.feature = x
-        x = self.block6(x)
         return x
+
+# 生成网络测试
+generator = netG()
+print(generator)
 
 
 # 定义判别模型
@@ -97,7 +203,8 @@ class netD(nn.Module):
             nn.Conv2d(128, 256, 3, stride=2), nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2))
 
-        self.classifier = nn.Linear(6*6*256, 1)
+        self.classifier = nn.Sequential(
+            nn.Linear(6*6*256, 1), nn.Sigmoid())
 
     def forward(self, x):
         x = self.block1(x)
@@ -108,133 +215,27 @@ class netD(nn.Module):
         x = self.classifier(x)
         return x
 
-class CGAN(object):
-    def __init__(self,
-                 image_size=132,  # 训练图像的尺寸
-                 label_size=120,  # 生成图像的尺寸
-                 batch_size=4,
-                 c_dim=1,
-                 checkpoint_dir=None,
-                 sample_dir=None):
-        self.is_grayscale = (c_dim == 1)
-        self.image_size = image_size
-        self.label_size = label_size
-        self.batch_size = batch_size
+# 定义图像标准差损失
+class stand_loss(nn.Module):
+    def __init__(self):
+        super(stand_loss, self).__init__()
 
-        self.c_dim = c_dim
+    def forward(self, input):
+        # 将input按照不同的batch进行分解
+        size = input.shape[0]
+        self.loss = 0
+        for i in range(size):
+            image = input[i]
+            # 计算图像的均值和标准差
+            stand_dev = torch.std(image)
+            mean = torch.mean(image)
+            # 定义归一化系数
+            norm_coeff = max(mean, 1-mean)
+            loss = 1 - stand_dev / norm_coeff
+            self.loss += loss
 
-        self.checkpoint_dir = checkpoint_dir
-        self.sample_dir = sample_dir
+        return self.loss
 
-
-    def train(self, opt, netD, netG):
-        # 根据输入参数读入数据并进行训练/测试
-        # if opt.is_train:
-        #     input_setup(opt, "Train_ir")
-        #     input_setup(opt, "Train_vi")
-        # else:
-        #     nx_ir, ny_ir = input_setup(opt, "Test_ir")
-        #     nx_vi, ny_vi = input_setup(opt, "Test_vi")
-
-        if opt.is_train:
-            data_dir_ir = os.path.join('./{}'.format(opt.checkpoint_dir), "Train_ir", "train.h5")
-            data_dir_vi = os.path.join('./{}'.format(opt.checkpoint_dir), "Train_vi", "train.h5")
-        else:
-            data_dir_ir = os.path.join('./{}'.format(opt.checkpoint_dir), "Test_ir", "test.h5")
-            data_dir_vi = os.path.join('./{}'.format(opt.checkpoint_dir), "Test_vi", "test.h5")
-
-        train_data_ir, train_label_ir = read_data(data_dir_ir)
-        train_data_vi, train_label_vi = read_data(data_dir_vi)
-        # 定义参数的更新方式（D和G分开训练）
-        fusion_model = netG()
-        discriminator = netD()
-        optimizerG = Adam(fusion_model.parameters(), lr=opt.learning_rate, betas=(opt.beta1, 0.999))
-        optimizerD = Adam(discriminator.parameters(), lr=opt.learning_rate, betas=(opt.beta1, 0.999))
-        counter = 0
-        start_time = time.time()
-
-        # if self.load(self.checkpoint_dir):
-        # print(" [*] Load SUCCESS")
-        # else:
-        # print(" [!] Load failed...")
-
-        # 模型训练
-        if opt.is_train:
-            print("Training...")
-
-            for ep in range(opt.epoch):
-                # Run by batch images
-                batch_idxs = len(train_data_ir) // opt.batch_size  # 计算batch的个数作为索引
-                for idx in range(0, batch_idxs):
-                    batch_images_ir = train_data_ir[idx * opt.batch_size: (idx + 1) * opt.batch_size]
-                    batch_labels_ir = train_label_ir[idx * opt.batch_size: (idx + 1) * opt.batch_size]
-                    batch_images_vi = train_data_vi[idx * opt.batch_size: (idx + 1) * opt.batch_size]
-                    batch_labels_vi = train_label_vi[idx * opt.batch_size: (idx + 1) * opt.batch_size]
-
-                    if opt.gpu:
-                        fusion_model = fusion_model.cuda()
-                        discriminator = discriminator.cuda()
-                        batch_images_ir = torch.autograd.Variable(torch.Tensor(batch_images_ir).cuda())
-                        batch_labels_ir = torch.autograd.Variable(torch.Tensor(batch_labels_ir).cuda())
-                        batch_images_vi = torch.autograd.Variable(torch.Tensor(batch_images_vi).cuda())
-                        batch_labels_vi = torch.autograd.Variable(torch.Tensor(batch_labels_vi).cuda())
-
-                    # 将红外和可见光图像在通道方向连起来，第一通道是红外图像，第二通道是可见光图像
-                    input_image = torch.cat((batch_images_ir, batch_images_vi), -1)
-                    input_image = input_image.permute(0, 3, 1, 2)
-                    batch_labels_ir = batch_labels_ir.permute(0, 3, 1, 2)
-                    batch_labels_vi = batch_labels_vi.permute(0, 3, 1, 2)
-
-                    #  使用detach()截断梯度流
-                    fusion_image = fusion_model(input_image).detach()  # 生成器生成的结果
-                    loss_fn = torch.nn.MSELoss(reduce=True, size_average=True)  # 计算均方损失
-                    counter += 1  # 用于统计与显示
-                    # 生成器每训练依次，判别器训练两次
-                    for i in range(2):
-                        # ----- train netd -----
-                        discriminator.zero_grad()
-                        ## train netd with real img
-                        # 分别计算正样本和负样本的分类损失
-                        pos = discriminator(batch_labels_vi)
-                        neg = discriminator(fusion_image)
-                        pos_param = torch.autograd.Variable((torch.randn(self.batch_size, 1) * 0.5 + 0.7).cuda())  # 定义一组随机数
-                        pos_loss = loss_fn(pos, pos_param)
-                        neg_param = torch.autograd.Variable((torch.randn(self.batch_size, 1) * 0.3).cuda())  # 定义一组随机数
-                        neg_loss = loss_fn(neg, neg_param)
-                        d_loss = neg_loss + pos_loss
-                        d_loss.backward()
-                        optimizerD.step()
-
-                    # train netd with fake img
-                    fusion_model.zero_grad()
-                    fusion_image = fusion_model(input_image)
-                    neg_G = discriminator(fusion_image)  # 由训练后的判别器对伪造输入的判别结果
-                    g_param_1 = torch.autograd.Variable((torch.randn(self.batch_size, 1) * 0.5 + 0.7).cuda())
-                    g_loss_1 = loss_fn(neg_G, g_param_1)
-                    # 利用卷积网络计算图像梯度
-                    image_grad = gradient().cuda()
-                    g_loss_2 = loss_fn(fusion_image, batch_labels_ir) + 5 * loss_fn(
-                        image_grad(fusion_image), image_grad(batch_labels_vi))
-                    g_loss_total = g_loss_1 + 100 * g_loss_2
-                    g_loss_total.backward()
-                    optimizerG.step()
-
-                    if counter % 10 == 0:
-                        print("Epoch: [%2d], step: [%2d], time: [%4.4f], loss_d: [%.8f],loss_g:[%.8f]" \
-                              % ((ep + 1), counter, time.time() - start_time, d_loss, g_loss_total))
-        torch.save(discriminator.state_dict(), 'dcgan_netd.pth')
-        torch.save(fusion_model.state_dict(), 'dcgan_netg.pth')
-
-        # # 模型测试
-        # else:
-        #     print("Testing...")
-        #
-        #     result = self.fusion_image.eval(
-        #         feed_dict={self.images_ir: train_data_ir, self.labels_ir: train_label_ir, self.images_vi: train_data_vi,
-        #                    self.labels_vi: train_label_vi})
-        #     result = result * 127.5 + 127.5
-        #     result = merge(result, [nx_ir, ny_ir])
-        #     result = result.squeeze()
-        #     image_path = os.path.join(os.getcwd(), opt.sample_dir)
-        #     image_path = os.path.join(image_path, "test_image.png")
-        #     imsave(result, image_path)
+    def backward(self):
+        self.loss.backward()
+        return self.loss
