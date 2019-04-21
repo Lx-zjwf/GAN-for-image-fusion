@@ -75,22 +75,39 @@ class netG(nn.Module):
         self.fusion_res = Variable(torch.zeros(1, 1, 3, 3).cuda())
 
         self.block1 = nn.Sequential(
-            nn.Conv2d(2, 64, 5), nn.BatchNorm2d(64),
+            nn.Conv2d(2, 16, 3, padding=1), nn.BatchNorm2d(16),
             nn.LeakyReLU(0.2))
 
-        self.block2 = self.resnet(resblock, 64, 64)
+        self.block2 = nn.Sequential(
+            nn.Conv2d(16, 16, 3, padding=1), nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.2))
 
-        self.block3 = nn.LeakyReLU(0.2)
+        self.block3 = nn.Sequential(
+            nn.Conv2d(32, 16, 3, padding=1), nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.2))
 
         self.block4 = nn.Sequential(
-            nn.Conv2d(64, 256, 5), nn.BatchNorm2d(256),
+            nn.Conv2d(48, 16, 3, padding=1), nn.BatchNorm2d(16),
             nn.LeakyReLU(0.2))
 
         self.block5 = nn.Sequential(
-            nn.Conv2d(256, 1, 5), nn.Tanh())
+            nn.Conv2d(64, 64, 5), nn.BatchNorm2d(64),
+            nn.LeakyReLU(0.2))
+
+        self.block6 = nn.Sequential(
+            nn.Conv2d(64, 32, 5), nn.BatchNorm2d(32),
+            nn.LeakyReLU(0.2))
+
+        self.block7 = nn.Sequential(
+            nn.Conv2d(32, 16, 5), nn.BatchNorm2d(16),
+            nn.LeakyReLU(0.2))
+
+        self.block8 = nn.Sequential(
+            nn.Conv2d(16, 1, 3, padding=1), nn.BatchNorm2d(1),
+            nn.Tanh())
 
         # 加入高频提取模块
-        self.block6 = high_extra()
+        self.block9 = high_extra()
 
     # 定义残差网络
     def resnet(self, block, i_channel, o_channel):
@@ -101,16 +118,20 @@ class netG(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = self.block1(x)
-        residual = x
-        x = self.block2(x)
-        x += residual
-        x = self.block3(x)
-        x = self.block4(x)
-        x = self.block5(x)
+        out1 = self.block1(x)
+        out2 = self.block2(out1)
+        out_cat = torch.cat((out1, out2), 1)
+        out3 = self.block3(out_cat)
+        out_cat = torch.cat((out1, out2, out3), 1)
+        out4 = self.block4(out_cat)
+        out_cat = torch.cat((out1, out2, out3, out4), 1)
+        out5 = self.block5(out_cat)
         # 提取第五层的输出结果为融合后的图像
-        self.fusion_res = x
-        out = self.block6(x)  # 最终的输出结果为高频图像
+        self.fusion_res = out5
+        out6 = self.block6(out5)
+        out7 = self.block7(out6)
+        out8 = self.block8(out7)
+        out = self.block9(out8)
         return out
 
 
