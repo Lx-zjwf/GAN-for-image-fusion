@@ -51,6 +51,7 @@ def decomp_combine_image(ir_image, vi_image):
                 combine_high[m][n] = vi_high[m][n]
 
     combine_low = (ir_low + vi_low) / 2
+    combine_average = (ir_image + vi_image) /2
 
     # 将计算得到的图像数据通过uint8的方式显示出来
     # cv2.imshow('ir_low', (ir_low*127.5 + 127.5).astype(np.uint8))
@@ -60,14 +61,15 @@ def decomp_combine_image(ir_image, vi_image):
     # cv2.imshow('combine_low', (combine_low * 127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('combine_high', (combine_high * 127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('combine', ((combine_high + combine_low) * 127.5 + 127.5).astype(np.uint8))
-    # cv2.imshow('combine_average', ((ir_image + vi_image) * 0.5).astype(np.uint8))
+    # cv2.imshow('combine_average', (combine_average.astype(np.uint8)))
+    # cv2.imshow('calc_low', ((combine_average - combine_high * 127.5 + 127.5).astype(np.uint8)))
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
 
     return combine_low
 
 def input_setup(index):
-    padding = 6  # 填充卷积带来的尺寸缩减
+    padding = 0  # 填充卷积带来的尺寸缩减
 
     ir_image = imread(data_ir[index], True)
     vi_image = imread(data_vi[index], True)
@@ -80,8 +82,9 @@ def input_setup(index):
     input_ir = (ir_image-127.5)/127.5  # 将该幅图像的数据归一化
     # 对图像进行缩放
     height, width = input_ir.shape
-    size = (round(width * 0.5), round(height * 0.5))
+    size = (round(width * 0.25), round(height * 0.25))
     input_ir = cv2.resize(input_ir, size, interpolation=cv2.INTER_AREA)
+    combine_low = cv2.resize(combine_low, size, cv2.INTER_AREA)
     # 图像填充
     input_ir = np.lib.pad(input_ir, ((padding, padding), (padding, padding)), 'edge')
     w, h = input_ir.shape
@@ -101,8 +104,8 @@ def input_setup(index):
 fusion_model = netG().cuda().eval()
 # print(fusion_model)
 # discriminator = netD().cuda()
-ep = 0
-model_path = os.path.join(os.getcwd(), 'WGAN_weight_0419', 'epoch' + str(ep))
+ep = 4
+model_path = os.path.join(os.getcwd(), 'weight_0504', 'epoch' + str(ep))
 netG_path = os.path.join(model_path, 'netG.pth')
 # netD_path = os.path.join(model_path, 'netD.pth')
 fusion_model.load_state_dict(torch.load(netG_path))
@@ -142,12 +145,9 @@ for i in range(0, len(data_ir)):
     result_high = result_high.squeeze().cpu().detach().numpy()
     result_low = result - result_high
     dis_loss = torch.nn.MSELoss(reduce=True, size_average=True)
-    height, width = combine_low.shape
-    size = (round(width * 0.5), round(height * 0.5))
-    combine_low = cv2.resize(combine_low, size, cv2.INTER_AREA)
     low_loss = dis_loss(torch.tensor((result_low-127.5)/127.5), torch.FloatTensor(combine_low))
     print('low_loss=', low_loss)
-    image_path = os.path.join(os.getcwd(), 'WGAN_test_result', 'epoch' + str(ep))
+    image_path = os.path.join(os.getcwd(), 'result_0504', 'epoch' + str(ep))
     if not os.path.exists(image_path):
         os.makedirs(image_path)
     if i <= 9:

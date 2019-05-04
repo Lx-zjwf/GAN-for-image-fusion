@@ -8,7 +8,7 @@ parse = argparse.ArgumentParser()
 parse.add_argument('--epoch', type=int, default=20)
 parse.add_argument('--batch_size', type=int, default=4)
 parse.add_argument('--image_size', type=int, default=132)
-parse.add_argument('--label_size', type=int, default=120)
+parse.add_argument('--label_size', type=int, default=132)
 parse.add_argument('--learning_rate', type=float, default=2e-4)  # or 1e-4
 parse.add_argument('--c_dim', type=int, default=1)
 parse.add_argument('--scale', type=int, default=3)
@@ -27,7 +27,7 @@ if not os.path.exists(opt.checkpoint_dir):
 if not os.path.exists(opt.sample_dir):
     os.makedirs(opt.sample_dir)
 
-srcnn = FusionGAN(image_size=132, label_size=120, batch_size=4,  c_dim=1,
+srcnn = FusionGAN(image_size=132, label_size=132, batch_size=4,  c_dim=1,
                   checkpoint_dir="checkpoint", sample_dir="sample")
 
 srcnn.train(opt, netD, netG)
