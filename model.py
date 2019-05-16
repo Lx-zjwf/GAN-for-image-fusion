@@ -7,56 +7,52 @@ from torch import nn
 from torch.optim import Adam
 from torch.autograd import Variable
 
-# 定义高频提取模型
-class high_extra(nn.Module):
+# 定义残差模型
+class res_module(nn.Module):
     def __init__(self):
-        super(high_extra, self).__init__()
+        super(res_module, self).__init__()
 
         self.block1 = nn.Sequential(
-            nn.Conv2d(1, 64, 5, padding=2), nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2))
-
-        self.block2 = nn.Sequential(
             nn.Conv2d(64, 128, 5, padding=2), nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2))
 
-        self.block3 = nn.Sequential(
+        self.block2 = nn.Sequential(
             nn.Conv2d(128, 256, 3, padding=1), nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2))
 
-        self.block4 = nn.Sequential(
+        self.block3 = nn.Sequential(
             nn.Conv2d(256, 512, 3, padding=1), nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2))
 
-        self.block5 = nn.Sequential(
+        self.block4 = nn.Sequential(
             nn.Conv2d(512, 512, 3, padding=1), nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2))
 
-        self.block6 = nn.Sequential(
+        self.block5 = nn.Sequential(
             nn.Conv2d(512, 1024, 1), nn.BatchNorm2d(1024),
             nn.LeakyReLU(0.2))
 
-        self.block7 = nn.Sequential(
+        self.block6 = nn.Sequential(
             nn.Conv2d(1024, 512, 1), nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2))
 
-        self.block8 = nn.Sequential(
+        self.block7 = nn.Sequential(
             nn.Conv2d(512, 512, 3, padding=1), nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2))
 
-        self.block9 = nn.Sequential(
+        self.block8 = nn.Sequential(
             nn.Conv2d(512, 256, 3, padding=1), nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2))
 
-        self.block10 = nn.Sequential(
+        self.block9 = nn.Sequential(
             nn.Conv2d(256, 128, 3, padding=1), nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2))
 
-        self.block11 = nn.Sequential(
+        self.block10 = nn.Sequential(
             nn.Conv2d(128, 64, 5, padding=2), nn.BatchNorm2d(64),
             nn.LeakyReLU(0.2))
 
-        self.block12 = nn.Sequential(
+        self.block11 = nn.Sequential(
             nn.Conv2d(64, 1, 5, padding=2), nn.Tanh())
 
     def forward(self, x):
@@ -66,18 +62,17 @@ class high_extra(nn.Module):
         out4 = self.block4(out3)
         out5 = self.block5(out4)
         out6 = self.block6(out5)
-        out7 = self.block7(out6)
-        add_out = out7 + out5
+        add_out = out6 + out4
+        out7 = self.block7(add_out)
+        add_out = out7 + out3
         out8 = self.block8(add_out)
-        add_out = out8 + out4
+        add_out = out8 + out2
         out9 = self.block9(add_out)
-        add_out = out9 + out3
+        add_out = out9 + out1
         out10 = self.block10(add_out)
-        add_out = out10 + out2
-        out11 = self.block11(add_out)
-        add_out = out11 + out1
-        high_out = self.block12(add_out)
-        return high_out
+        add_out = out10 + x
+        recon_res = self.block11(add_out)
+        return recon_res
 
 # 定义残差块
 class resblock(nn.Module):
@@ -105,11 +100,8 @@ class netG(nn.Module):
     def __init__(self):
         super(netG, self).__init__()
 
-        # 第五层的输出：融合结果
-        self.fusion_res = Variable(torch.zeros(1, 1, 3, 3).cuda())
-
         self.block1 = nn.Sequential(
-            nn.Conv2d(2, 16, 3, padding=1), nn.BatchNorm2d(16),
+            nn.Conv2d(1, 16, 3, padding=1), nn.BatchNorm2d(16),
             nn.LeakyReLU(0.2))
 
         self.block2 = nn.Sequential(
@@ -124,23 +116,8 @@ class netG(nn.Module):
             nn.Conv2d(48, 16, 3, padding=1), nn.BatchNorm2d(16),
             nn.LeakyReLU(0.2))
 
-        self.block5 = nn.Sequential(
-            nn.Conv2d(64, 64, 5, padding=2), nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2))
-
-        self.block6 = nn.Sequential(
-            nn.Conv2d(64, 32, 5, padding=2), nn.BatchNorm2d(32),
-            nn.LeakyReLU(0.2))
-
-        self.block7 = nn.Sequential(
-            nn.Conv2d(32, 16, 5, padding=2), nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.2))
-
-        self.block8 = nn.Sequential(
-            nn.Conv2d(16, 1, 3, padding=1))
-
-        # 加入高频提取模块
-        self.block9 = high_extra()
+        # 加入残差模块
+        self.block5 = res_module()
 
     # 定义残差网络
     def resnet(self, block, i_channel, o_channel):
@@ -158,14 +135,8 @@ class netG(nn.Module):
         out_cat = torch.cat((out1, out2, out3), 1)
         out4 = self.block4(out_cat)
         out_cat = torch.cat((out1, out2, out3, out4), 1)
-        out5 = self.block5(out_cat)
-        out6 = self.block6(out5)
-        out7 = self.block7(out6)
-        out8 = self.block8(out7)
-        # 提取第八层的输出结果为融合后的图像
-        self.fusion_res = out8
-        out = self.block9(out8.detach())
-        return out
+        res = self.block5(out_cat)
+        return res
 
 
 # 定义判别模型

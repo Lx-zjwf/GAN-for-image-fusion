@@ -103,12 +103,12 @@ class FusionGAN(object):
 
     def train(self, opt, netD, netG):
         # 根据输入参数读入数据并进行训练/测试
-        if opt.is_train:
-            input_setup(opt, "Train_ir")
-            input_setup(opt, "Train_vi")
-        else:
-            nx_ir, ny_ir = input_setup(opt, "Test_ir")
-            nx_vi, ny_vi = input_setup(opt, "Test_vi")
+        # if opt.is_train:
+        #     input_setup(opt, "Train_ir")
+        #     input_setup(opt, "Train_vi")
+        # else:
+        #     nx_ir, ny_ir = input_setup(opt, "Test_ir")
+        #     nx_vi, ny_vi = input_setup(opt, "Test_vi")
 
         if opt.is_train:
             data_dir_ir = os.path.join('./{}'.format(opt.checkpoint_dir), "Train_ir", "train.h5")
@@ -121,14 +121,14 @@ class FusionGAN(object):
         train_data_ir, train_label_ir = read_data(data_dir_ir)
         train_data_vi, train_label_vi = read_data(data_dir_vi)
 
-        lda = 5
+        lda = 3
         npad = 16
         counter = 0
 
         # 定义参数的更新方式（D和G分开训练）,需要用到的损失函数
-        fusion_model = netG()
+        recon_model = netG()
         discriminator = netD()
-        optimizerG = Adam(fusion_model.parameters(), lr=opt.learning_rate, betas=(opt.beta1, 0.999))
+        optimizerG = Adam(recon_model.parameters(), lr=opt.learning_rate, betas=(opt.beta1, 0.999))
         optimizerD = Adam(discriminator.parameters(), lr=opt.learning_rate, betas=(opt.beta1, 0.999))
         # criterion
         criterion = nn.BCELoss(reduce=True, size_average=True)  # 定义损失函数：交叉熵
@@ -136,7 +136,7 @@ class FusionGAN(object):
         low_loss = nn.L1Loss()
 
         if opt.gpu:
-            fusion_model.cuda()
+            recon_model.cuda()
             discriminator.cuda()
             criterion.cuda()  # it's a good habit
             dis_loss.cuda()
@@ -151,10 +151,10 @@ class FusionGAN(object):
         # print(" [!] Load failed...")
 
         # 加载预训练模型
-        net_path = os.path.join(os.getcwd(), 'lowloss_sum_weight', 'epoch0')
+        net_path = os.path.join(os.getcwd(), 'weight_0507', 'epoch0')
         netG_path = os.path.join(net_path, 'netG.pth')
         netD_path = os.path.join(net_path, 'netD.pth')
-        fusion_model.load_state_dict(torch.load(netG_path))
+        recon_model.load_state_dict(torch.load(netG_path))
         discriminator.load_state_dict(torch.load(netD_path))
 
         # 模型训练
@@ -173,27 +173,28 @@ class FusionGAN(object):
                     batch_labels_vi = train_label_vi[idx * opt.batch_size: (idx + 1) * opt.batch_size]
                     # 注意此时的数据涉及到维度转换的问题而非
                     # 对标签图像进行分解，用于之后损失函数的计算
-                    label_ir_low, label_ir_high = lowpass(batch_labels_ir, lda, npad)
-                    label_vi_low, label_vi_high = lowpass(batch_labels_vi, lda, npad)
+                    images_ir_low, images_ir_high = lowpass(batch_images_ir, lda, npad)
+                    images_vi_low, images_vi_high = lowpass(batch_images_vi, lda, npad)
                     # 将vi和ir的高频图像进行合并
-                    combine_label_high = combine_high_image(label_ir_high, label_vi_high)
+                    combine_label_high = combine_high_image(images_ir_high, images_vi_high)
 
                     if opt.gpu:
                         batch_images_ir = torch.autograd.Variable(torch.Tensor(batch_images_ir).cuda())
                         batch_labels_ir = torch.autograd.Variable(torch.Tensor(batch_labels_ir).cuda())
-                        label_ir_low = torch.autograd.Variable(torch.Tensor(label_ir_low).cuda())
+                        images_ir_low = torch.autograd.Variable(torch.Tensor(images_ir_low).cuda())
                         batch_images_vi = torch.autograd.Variable(torch.Tensor(batch_images_vi).cuda())
                         batch_labels_vi = torch.autograd.Variable(torch.Tensor(batch_labels_vi).cuda())
-                        label_vi_low = torch.autograd.Variable(torch.Tensor(label_vi_low).cuda())
+                        images_vi_low = torch.autograd.Variable(torch.Tensor(images_vi_low).cuda())
                         combine_label_high = torch.autograd.Variable(torch.Tensor(combine_label_high).cuda())
 
                     # 将红外和可见光图像在通道方向连起来，第一通道是红外图像，第二通道是可见光图像
-                    input_image = torch.cat((batch_images_ir, batch_images_vi), -1)
+                    input_image = torch.cat((images_ir_low, images_vi_low), 0)
+                    batch_labels = torch.cat((batch_labels_ir, batch_labels_vi), 0)
                     # 根据网络的卷积方法对待训练图像进行维度变换
-                    input_image = input_image.permute(0, 3, 1, 2)
+                    batch_labels = batch_labels.permute(0, 3, 1, 2)
                     # 计算标签图像的灰度平均值
                     average_labels = (batch_labels_ir + batch_labels_vi) / 2.0
-                    label_average_low = (label_ir_low + label_vi_low) / 2.0
+                    label_average_low = (images_ir_low + images_vi_low) / 2.0
                     batch_labels_ir = batch_labels_ir.permute(0, 3, 1, 2)
                     batch_labels_vi = batch_labels_vi.permute(0, 3, 1, 2)
                     average_labels = average_labels.permute(0, 3, 1, 2)
@@ -206,12 +207,12 @@ class FusionGAN(object):
                         # discriminator.zero_grad()
                         ## train netd with real img
                         # 分别计算正样本和负样本的分类损失
-                        pos = discriminator(combine_label_high)
+                        pos = discriminator(batch_labels)
                         # 使用detach()截断梯度流,更新判别器参数不对生成器产生影响
                         # 生成器生成的结果
-                        fusion_high = fusion_model(input_image).detach()
+                        recon_res = recon_model(input_image).detach()
                         # 判别网络对高频图谱进行分类
-                        neg = discriminator(fusion_high)
+                        neg = discriminator(recon_res)
                         pos_param = torch.autograd.Variable((torch.ones(self.batch_size, 1)).cuda())  # 定义一组随机数
                         pos_loss = criterion(pos, pos_param)
                         neg_param = torch.autograd.Variable((torch.zeros(self.batch_size, 1)).cuda())  # 定义一组随机数
@@ -223,45 +224,33 @@ class FusionGAN(object):
 
                     # train netd with fake img
                     # fusion_model.zero_grad()
-                    fusion_high = fusion_model(input_image)
-                    # 将融合后的图像分解成高频和低频
-                    fusion_image = fusion_model.fusion_res
-                    fusion_low = fusion_image - fusion_high
-                    neg_G = discriminator(fusion_high)  # 由训练后的判别器对伪造输入的判别结果
+                    recon_res = recon_model(input_image)
+                    neg_G = discriminator(recon_res)  # 由训练后的判别器对伪造输入的判别结果
                     g_param_1 = torch.autograd.Variable((torch.ones(self.batch_size, 1)).cuda())
                     # 生成器损失一：判别器对生成结果的判别损失
                     g_loss_1 = criterion(neg_G, g_param_1)
-                    # 生成器损失二：生成的高频区域与高频融合图像的相似度
-                    g_loss_2 = dis_loss(fusion_high, combine_label_high)
-                    # 生成器损失三：生成图像的低频部分在原始图像的低频分布内（L1损失）
-                    low_fuir_diss = abs(fusion_low - label_ir_low)
-                    low_fuvi_diss = abs(fusion_low - label_vi_low)
-                    low_diss = low_fuir_diss + low_fuvi_diss
-                    low_irvi_diss = abs(label_ir_low - label_vi_low)
-                    g_loss_3 = low_loss(low_diss, low_irvi_diss)
-                    # 生成器损失四：计算图像标准差损失
-                    loss_4 = stand_loss()
-                    g_loss_4 = loss_4(fusion_image) / 4.0
-                    # 生成器损失五：生成低频区域与低频均值的差异  # 生成图像灰度与平均图像灰度的差异
-                    g_loss_5 = dis_loss(fusion_low, label_ir_low) + dis_loss(fusion_low, label_vi_low)
-                    g_loss_total = g_loss_1 + 1e3 * g_loss_2 + g_loss_5 + 0.2 * g_loss_4  # + 1e4 * g_loss_3
+                    # 生成器损失二：生成的重建结果与原始图像的差异
+                    g_loss_2 = dis_loss(recon_res, batch_labels)
+                    g_loss_total = g_loss_1 + 1e3 * g_loss_2
                     loss_meter.add(g_loss_total.data.cpu())  # loss可视化
                     optimizerG.zero_grad()
                     g_loss_total.backward()
                     optimizerG.step()
                     # 查看生成模型的网络参数，同 fusion_model.block5[0].weight.grad
-                    params = list(fusion_model.parameters())
+                    params = list(recon_model.parameters())
                     # print(params[16].grad)
 
                     if counter % 10 == 0:
                         print("Epoch: [%2d], step: [%2d], loss_d: [%.8f],loss_g:[%.8f]"
                               % ((ep + 1), counter, d_loss, g_loss_total))
+                    # 损失可视化
+                    if counter % 100 == 0:
+                        vis.plot_many_stack({'train_loss': loss_meter.value()[0]})
 
-                vis.plot_many_stack({'train_loss': loss_meter.value()[0]})  # 为了可视化增加的内容
-                model_path = os.path.join(os.getcwd(), 'WGAN_weight_0504', 'epoch' + str(ep))
+                model_path = os.path.join(os.getcwd(), 'WGAN_weight_0507', 'epoch' + str(ep))
                 if not os.path.exists(model_path):
                     os.makedirs(model_path)
                 netD_path = os.path.join(model_path, 'netD.pth')
                 netG_path = os.path.join(model_path, 'netG.pth')
                 torch.save(discriminator.state_dict(), netD_path)
-                torch.save(fusion_model.state_dict(), netG_path)
+                torch.save(recon_model.state_dict(), netG_path)

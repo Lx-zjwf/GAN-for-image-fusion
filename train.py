@@ -6,7 +6,7 @@ import os
 
 parse = argparse.ArgumentParser()
 parse.add_argument('--epoch', type=int, default=20)
-parse.add_argument('--batch_size', type=int, default=4)
+parse.add_argument('--batch_size', type=int, default=2)
 parse.add_argument('--image_size', type=int, default=132)
 parse.add_argument('--label_size', type=int, default=132)
 parse.add_argument('--learning_rate', type=float, default=2e-4)  # or 1e-4
