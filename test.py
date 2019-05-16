@@ -37,8 +37,8 @@ def prepare_data(dataset):
 # 通过滤波将图像分解为低频图像和高频图像
 def decomp_combine_image(ir_image, vi_image):
     # 转换为float类型 .astype(np.float)
-    ir_low, ir_high = tikhonov_filter((ir_image-127.5)/127.5, 5, 16)
-    vi_low, vi_high = tikhonov_filter((vi_image-127.5)/127.5, 5, 16)
+    ir_low, ir_high = tikhonov_filter((ir_image-127.5)/127.5, 3, 16)
+    vi_low, vi_high = tikhonov_filter((vi_image-127.5)/127.5, 3, 16)
 
     # 对红外和可见光图像的高频区域进行融合
     combine_high = ir_high
@@ -50,79 +50,145 @@ def decomp_combine_image(ir_image, vi_image):
             else:
                 combine_high[m][n] = vi_high[m][n]
 
-    combine_low = (ir_low + vi_low) / 2
-    combine_average = (ir_image + vi_image) /2
+    # 利用主成分分析的方法对低频区域进行融合
+    # ir_low_flat = ir_low.flatten()
+    # vi_low_flat = vi_low.flatten()
+    # cov_array = np.cov(ir_low_flat, vi_low_flat)  # 计算协方差矩阵
+    # 计算特征值与特征向量
+    # fea_val, fea_vec = np.linalg.eig(cov_array)
+    # scale = int(abs(fea_vec[0][0] / (fea_vec[1][0])))
+    # lambda1 = abs(fea_vec[0][0] / scale) / (abs(fea_vec[0][0] / scale) + abs(fea_vec[1][0]))
+    # lambda2 = abs(fea_vec[1][0]) / (abs(fea_vec[0][0] / scale) + abs(fea_vec[1][0]))
+    # combine_low = lambda1 * ir_low + lambda2 * vi_low
+
+    # 基于热源集中度的低频图像融合方法
+    ir_low = ir_low * 127.5 + 127.5
+    vi_low = vi_low * 127.5 + 127.5
+    combine_low = np.zeros((row, col))
+    energy_ir = np.mean(ir_low * ir_low)
+    energy_vi = np.mean(vi_low * vi_low)
+    # 定义分块的尺寸
+    block = 50
+    ht_stride = int(row / block)
+    wd_stride = int(col / block)
+    # 用于主成分分析的矩阵（能量，空间频率）
+    ir_feature = []
+    vi_feature = []
+    for i in range(0, block):
+        for j in range(0, block):
+            # 将每一块取出进行处理
+            if (i != block-1) and (j != block-1):
+                region_ir = ir_low[ht_stride * i:ht_stride * (i + 1), wd_stride * j:wd_stride * (j + 1)]
+                region_vi = vi_low[ht_stride * i:ht_stride * (i + 1), wd_stride * j:wd_stride * (j + 1)]
+            elif (i == block-1) and (j != block-1):
+                region_ir = ir_low[ht_stride * i:row, wd_stride * j:wd_stride * (j + 1)]
+                region_vi = vi_low[ht_stride * i:row, wd_stride * j:wd_stride * (j + 1)]
+            elif (i != block-1) and (j == block-1):
+                region_ir = ir_low[ht_stride * i:ht_stride * (i + 1), wd_stride * j:col]
+                region_vi = vi_low[ht_stride * i:ht_stride * (i + 1), wd_stride * j:col]
+            elif (i == block-1) and (j == block-1):
+                region_ir = ir_low[ht_stride * i:row, wd_stride * j:col]
+                region_vi = vi_low[ht_stride * i:row, wd_stride * j:col]
+
+            energy_ir_region = np.mean(region_ir * region_ir)
+            energy_vi_region = np.mean(region_vi * region_vi)
+            energy_ir_region_norm = energy_ir_region / (energy_ir_region + energy_vi_region)
+            energy_vi_region_norm = energy_vi_region / (energy_ir_region + energy_vi_region)
+            ir_feature.append(1.5 * energy_ir_region_norm)
+            vi_feature.append(1.5 * energy_vi_region_norm)
+            hr_ir = (energy_ir_region - energy_ir) / energy_ir
+            hr_vi = (energy_vi_region - energy_vi) / energy_vi
+            hscr = abs(hr_ir / hr_vi)
+
+            grad_ir_y = cv2.Sobel(region_ir, cv2.CV_64F, dx=0, dy=1)
+            fr_ir = np.mean(abs(grad_ir_y))
+            grad_ir_x = cv2.Sobel(region_ir, cv2.CV_64F, dx=1, dy=0)
+            fc_ir = np.mean(abs(grad_ir_x))
+            sf_ir = np.sqrt(pow(fc_ir, 2) + pow(fr_ir, 2))
+
+            grad_vi_y = cv2.Sobel(region_vi, cv2.CV_64F, dx=0, dy=1)
+            fr_vi = np.mean(abs(grad_vi_y))
+            grad_vi_x = cv2.Sobel(region_vi, cv2.CV_64F, dx=1, dy=0)
+            fc_vi = np.mean(abs(grad_vi_x))
+            sf_vi = np.sqrt(pow(fc_vi, 2) + pow(fr_vi, 2))
+
+            ratio = sf_ir / (sf_vi + sf_ir)
+            sf_ir_norm = sf_ir / (sf_vi + sf_ir)
+            sf_vi_norm = sf_vi / (sf_vi + sf_ir)
+            ir_feature.append(sf_ir_norm)
+            vi_feature.append(sf_vi_norm)
+
+            region_fusion = ratio * region_ir + (1 - ratio) * region_vi
+
+            # if (hscr > 1.5):
+            #     region_fusion = region_ir
+            # else:
+            #     region_fusion = ratio * region_ir + (1 - ratio) * region_vi
+
+            # if (i != block-1) and (j != block-1):
+            #     combine_low[ht_stride * i:ht_stride * (i + 1), wd_stride * j:wd_stride * (j + 1)] = region_fusion
+            # elif (i == block-1) and (j != block-1):
+            #     combine_low[ht_stride * i:row, wd_stride * j:wd_stride * (j + 1)] = region_fusion
+            # elif (i != block-1) and (j == block-1):
+            #     combine_low[ht_stride * i:ht_stride * (i + 1), wd_stride * j:col] = region_fusion
+            # elif (i == block-1) and (j == block-1):
+            #     combine_low[ht_stride * i:row, wd_stride * j:col] = region_fusion
+
+    ir_feature = np.array(ir_feature)
+    vi_feature = np.array(vi_feature)
+
+    # 利用主成分分析的方法对低频区域进行融合
+    cov_array = np.cov(ir_feature, vi_feature)  # 计算协方差矩阵
+    # 计算特征值与特征向量
+    fea_val, fea_vec = np.linalg.eig(cov_array)
+    lambda1 = abs(fea_vec[0][0]) / (abs(fea_vec[0][0]) + abs(fea_vec[1][0]))
+    lambda2 = abs(fea_vec[1][0]) / (abs(fea_vec[0][0]) + abs(fea_vec[1][0]))
+    combine_low = lambda1 * ir_low + lambda2 * vi_low
+
+    combine_low = (combine_low - 127.5) / 127.5
 
     # 将计算得到的图像数据通过uint8的方式显示出来
+    # combine_average = (ir_image + vi_image) / 2
     # cv2.imshow('ir_low', (ir_low*127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('ir_high', (ir_high*127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('vi_low', (vi_low*127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('vi_high', (vi_high*127.5 + 127.5).astype(np.uint8))
-    # cv2.imshow('combine_low', (combine_low * 127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('combine_high', (combine_high * 127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('combine', ((combine_high + combine_low) * 127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('combine_average', (combine_average.astype(np.uint8)))
     # cv2.imshow('calc_low', ((combine_average - combine_high * 127.5 + 127.5).astype(np.uint8)))
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+
+    cv2.imshow('combine_low', (combine_low * 127.5 + 127.5).astype(np.uint8))
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
     return combine_low
 
-def input_setup(index):
-    padding = 0  # 填充卷积带来的尺寸缩减
-
-    ir_image = imread(data_ir[index], True)
-    vi_image = imread(data_vi[index], True)
-    # cv2.imshow('ir_image', ir_image.astype(np.uint8))
-    # cv2.imshow('vi_image', vi_image.astype(np.uint8))
-    # cv2.waitKey(0)
-
-    combine_low = decomp_combine_image(ir_image, vi_image)
-
-    input_ir = (ir_image-127.5)/127.5  # 将该幅图像的数据归一化
-    # 对图像进行缩放
-    height, width = input_ir.shape
-    size = (round(width * 0.25), round(height * 0.25))
-    input_ir = cv2.resize(input_ir, size, interpolation=cv2.INTER_AREA)
-    combine_low = cv2.resize(combine_low, size, cv2.INTER_AREA)
-    # 图像填充
-    input_ir = np.lib.pad(input_ir, ((padding, padding), (padding, padding)), 'edge')
-    w, h = input_ir.shape
-
-    input_vi = (vi_image-127.5)/127.5
-    input_vi = cv2.resize(input_vi, size, interpolation=cv2.INTER_AREA)
-    input_vi = np.lib.pad(input_vi, ((padding, padding), (padding, padding)), 'edge')
-
-    # 扩充输入数据的维度
-    train_data_ir = np.expand_dims(input_ir, axis=0)
-    train_data_vi = np.expand_dims(input_vi, axis=0)
-    train_data_ir = np.expand_dims(train_data_ir, axis=3)
-    train_data_vi = np.expand_dims(train_data_vi, axis=3)
-    return train_data_ir, train_data_vi, combine_low
-
 # 加载模型参数进行图像融合测试
-fusion_model = netG().cuda().eval()
+recon_model = netG().cuda().eval()
 # print(fusion_model)
 # discriminator = netD().cuda()
-ep = 4
-model_path = os.path.join(os.getcwd(), 'weight_0504', 'epoch' + str(ep))
+ep = 15
+model_path = os.path.join(os.getcwd(), 'weight_0507', 'epoch' + str(ep))
 netG_path = os.path.join(model_path, 'netG.pth')
-# netD_path = os.path.join(model_path, 'netD.pth')
-fusion_model.load_state_dict(torch.load(netG_path))
-# discriminator.load_state_dict(torch.load(netD_path))
-data_ir = prepare_data('Test_ir')
-data_vi = prepare_data('Test_vi')
+netD_path = os.path.join(model_path, 'netD.pth')
+recon_model.load_state_dict(torch.load(netG_path))
+data_ir = prepare_data('IR')
+data_vi = prepare_data('VIS')
 for i in range(0, len(data_ir)):
     start = time.time()
-    train_data_ir, train_data_vi, combine_low = input_setup(i)
-    # 去掉尺寸为1的维度，得到可处理的图像数据
-    # from_numpy得到的是DoubleTensor类型的，需要转成FloatTensor
-    train_data_ir = torch.FloatTensor(train_data_ir)
-    train_data_vi = torch.FloatTensor(train_data_vi)
-    input_image = torch.cat((train_data_ir, train_data_vi), -1)
-    # input_image = (train_data_ir + train_data_vi)/2.0
-    input_image = input_image.permute(0, 3, 1, 2)
-    input_image = torch.autograd.Variable(input_image.cuda(), volatile=True)
+
+    ir_image = imread(data_ir[i], True)
+    vi_image = imread(data_vi[i], True)
+    # 得到合并后的低频图像
+    combine_low = decomp_combine_image(ir_image, vi_image)
+
+    height, width = combine_low.shape
+    scale = 4
+    ht_stride = int(height / scale)
+    wd_stride = int(width / scale)
+    # 定义最终生成的图像
+    recon_res = np.zeros((ht_stride * scale, wd_stride * scale))
 
     # # 防止显存溢出
     # try:
@@ -135,32 +201,31 @@ for i in range(0, len(data_ir)):
     #     else:
     #         raise exception
 
-    result_high = fusion_model(input_image)
-    result = fusion_model.fusion_res
-    result = result * 127.5 + 127.5
-    result_high = result_high * 127.5 + 127.5
-    # 将生成的variable数据转成numpy类型
-    # 查看生成的图片以及低频、高频区域
-    result = result.squeeze().cpu().detach().numpy()
-    result_high = result_high.squeeze().cpu().detach().numpy()
-    result_low = result - result_high
-    dis_loss = torch.nn.MSELoss(reduce=True, size_average=True)
-    low_loss = dis_loss(torch.tensor((result_low-127.5)/127.5), torch.FloatTensor(combine_low))
-    print('low_loss=', low_loss)
-    image_path = os.path.join(os.getcwd(), 'result_0504', 'epoch' + str(ep))
+    # 将图像进行拆分运算
+    for m in range(0, scale):
+        for n in range(0, scale):
+            input_image = combine_low[ht_stride * m:ht_stride * (m + 1), wd_stride * n:wd_stride * (n + 1)]
+            # 扩充输入数据的维度
+            input_image = np.expand_dims(input_image, axis=0)
+            input_image = np.expand_dims(input_image, axis=3)
+            input_image = torch.FloatTensor(input_image)
+            input_image = input_image.permute(0, 3, 1, 2)
+            input_image = torch.autograd.Variable(input_image.cuda(), volatile=True)
+            block_recon_res = recon_model(input_image)
+            block_recon_res = block_recon_res * 127.5 + 127.5
+            # 将生成的variable数据转成numpy类型
+            # 查看生成的图片以及低频、高频区域
+            block_recon_res = block_recon_res.squeeze().cpu().detach().numpy()
+            recon_res[ht_stride * m:ht_stride * (m + 1), wd_stride * n:wd_stride * (n + 1)] = block_recon_res
+
+    image_path = os.path.join(os.getcwd(), 'result_0509', 'epoch' + str(ep))
     if not os.path.exists(image_path):
         os.makedirs(image_path)
     if i <= 9:
         result_path = os.path.join(image_path, 'result_0'+str(i)+".bmp")
-        reslow_path = os.path.join(image_path, 'reslow_0'+str(i)+".bmp")
-        reshigh_path = os.path.join(image_path, 'reshigh_0' + str(i) + ".bmp")
     else:
         result_path = os.path.join(image_path, 'result_'+str(i)+".bmp")
-        reslow_path = os.path.join(image_path, 'reslow_' + str(i) + ".bmp")
-        reshigh_path = os.path.join(image_path, 'reshigh_' + str(i) + ".bmp")
     end = time.time()
     # print(out.shape)
-    imsave(result.astype(np.uint8), result_path)
-    imsave(result_low.astype(np.uint8), reslow_path)
-    imsave(result_high.astype(np.uint8), reshigh_path)
+    imsave(recon_res.astype(np.uint8), result_path)
     print("Testing [%d] success, Testing time is [%f]" % (i, end-start))
