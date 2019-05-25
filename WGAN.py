@@ -217,7 +217,7 @@ class FusionGAN(object):
                     recon_grad = grad_filter(recon_res)
                     g_loss_3 = dis_loss(label_grad, recon_grad)
                     # 计算总损失
-                    g_loss_total = g_loss_1 + 1e3 * g_loss_2 + 1e6 * g_loss_3
+                    g_loss_total = g_loss_1 + 1e3 * g_loss_2 + 1e4 * g_loss_3
                     # loss_meter.add(g_loss_total.data.cpu())  # loss可视化
                     optimizerG.zero_grad()
                     g_loss_total.backward()
