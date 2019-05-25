@@ -168,8 +168,8 @@ def decomp_combine_image(ir_image, vi_image):
 recon_model = netG().cuda().eval()
 # print(fusion_model)
 # discriminator = netD().cuda()
-ep = 15
-model_path = os.path.join(os.getcwd(), 'weight_0507', 'epoch' + str(ep))
+ep = 2
+model_path = os.path.join(os.getcwd(), 'WGAN_weight_0517', 'epoch' + str(ep))
 netG_path = os.path.join(model_path, 'netG.pth')
 netD_path = os.path.join(model_path, 'netD.pth')
 recon_model.load_state_dict(torch.load(netG_path))
@@ -218,7 +218,7 @@ for i in range(0, len(data_ir)):
             block_recon_res = block_recon_res.squeeze().cpu().detach().numpy()
             recon_res[ht_stride * m:ht_stride * (m + 1), wd_stride * n:wd_stride * (n + 1)] = block_recon_res
 
-    image_path = os.path.join(os.getcwd(), 'result_0509', 'epoch' + str(ep))
+    image_path = os.path.join(os.getcwd(), 'result_0517', 'epoch' + str(ep))
     if not os.path.exists(image_path):
         os.makedirs(image_path)
     if i <= 9:

@@ -13,44 +13,45 @@ class res_module(nn.Module):
         super(res_module, self).__init__()
 
         self.block1 = nn.Sequential(
-            nn.Conv2d(64, 128, 5, padding=2), nn.BatchNorm2d(128),
+            nn.Conv2d(64, 128, 5, stride=2, padding=2), nn.BatchNorm2d(128),
             nn.LeakyReLU(0.2))
 
         self.block2 = nn.Sequential(
-            nn.Conv2d(128, 256, 3, padding=1), nn.BatchNorm2d(256),
+            nn.Conv2d(128, 256, 3, stride=2, padding=1), nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2))
 
         self.block3 = nn.Sequential(
-            nn.Conv2d(256, 512, 3, padding=1), nn.BatchNorm2d(512),
+            nn.Conv2d(256, 512, 3, stride=2, padding=1), nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2))
 
         self.block4 = nn.Sequential(
-            nn.Conv2d(512, 512, 3, padding=1), nn.BatchNorm2d(512),
+            nn.Conv2d(512, 512, 3, stride=2, padding=1), nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2))
 
         self.block5 = nn.Sequential(
-            nn.Conv2d(512, 1024, 1), nn.BatchNorm2d(1024),
+            nn.Conv2d(512, 1024, 1, stride=2), nn.BatchNorm2d(1024),
             nn.LeakyReLU(0.2))
 
         self.block6 = nn.Sequential(
-            nn.Conv2d(1024, 512, 1), nn.BatchNorm2d(512),
+            nn.ConvTranspose2d(1024, 512, 1, stride=2, output_padding=1), nn.BatchNorm2d(512),
             nn.LeakyReLU(0.2))
 
         self.block7 = nn.Sequential(
-            nn.Conv2d(512, 512, 3, padding=1), nn.BatchNorm2d(512),
-            nn.LeakyReLU(0.2))
+            nn.ConvTranspose2d(512, 512, 3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(512), nn.LeakyReLU(0.2))
 
         self.block8 = nn.Sequential(
-            nn.Conv2d(512, 256, 3, padding=1), nn.BatchNorm2d(256),
-            nn.LeakyReLU(0.2))
+            nn.ConvTranspose2d(512, 256, 3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(256), nn.LeakyReLU(0.2))
 
+        # 注意：反卷积如果需要得到输入尺寸倍数的输出，需要加上out_padding-1
         self.block9 = nn.Sequential(
-            nn.Conv2d(256, 128, 3, padding=1), nn.BatchNorm2d(128),
-            nn.LeakyReLU(0.2))
+            nn.ConvTranspose2d(256, 128, 3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(128), nn.LeakyReLU(0.2))
 
         self.block10 = nn.Sequential(
-            nn.Conv2d(128, 64, 5, padding=2), nn.BatchNorm2d(64),
-            nn.LeakyReLU(0.2))
+            nn.ConvTranspose2d(128, 64, 5, stride=2, padding=2, output_padding=1),
+            nn.BatchNorm2d(64), nn.LeakyReLU(0.2))
 
         self.block11 = nn.Sequential(
             nn.Conv2d(64, 1, 5, padding=2), nn.Tanh())

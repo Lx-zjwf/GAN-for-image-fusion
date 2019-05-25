@@ -147,40 +147,67 @@ def decomp_combine_image(ir_image, vi_image):
 
     # 将计算得到的图像数据通过uint8的方式显示出来
     # combine_average = (ir_image + vi_image) / 2
-    # cv2.imshow('ir_low', (ir_low*127.5 + 127.5).astype(np.uint8))
+    cv2.imshow('ir_low', ir_low.astype(np.uint8))
     # cv2.imshow('ir_high', (ir_high*127.5 + 127.5).astype(np.uint8))
-    # cv2.imshow('vi_low', (vi_low*127.5 + 127.5).astype(np.uint8))
+    cv2.imshow('vi_low', vi_low.astype(np.uint8))
     # cv2.imshow('vi_high', (vi_high*127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('combine_high', (combine_high * 127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('combine', ((combine_high + combine_low) * 127.5 + 127.5).astype(np.uint8))
     # cv2.imshow('combine_average', (combine_average.astype(np.uint8)))
     # cv2.imshow('calc_low', ((combine_average - combine_high * 127.5 + 127.5).astype(np.uint8)))
 
-    # cv2.imshow('combine_low', (combine_low * 127.5 + 127.5).astype(np.uint8))
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    cv2.imshow('combine_low', (combine_low * 127.5 + 127.5).astype(np.uint8))
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    # 根据要求对图像进行尺寸缩放
+    # height, width = combine_low.shape
+    # height_remainder = height % 32
+    # width_remainder = width % 32
+    # size = (int(width * 0.35), int(height * 0.35))
+    # size = (width - width_remainder, height - height_remainder)
+    size = (224, 224)
+    combine_low = cv2.resize(combine_low, size)
 
     return combine_low
 
 # 加载模型参数进行图像融合测试
 recon_model = netG().cuda().eval()
-ep = 19
-model_path = os.path.join(os.getcwd(), 'weight_0507', 'epoch' + str(ep))
+ep = 20
+model_path = os.path.join(os.getcwd(), 'weight_0520', 'epoch' + str(ep))
 netG_path = os.path.join(model_path, 'netG.pth')
 netD_path = os.path.join(model_path, 'netD.pth')
 recon_model.load_state_dict(torch.load(netG_path))
-data_ir = prepare_data('IR')
-data_vi = prepare_data('VIS')
-for i in range(0, len(data_ir)):
+data_ir = prepare_data('IR_BLUR')
+data_vi = prepare_data('VIS_BLUR')
+data_test = prepare_data('Test_data')  # 测试超分辨重建效果
+for i in range(0, 12):
     start = time.time()
+    # ir_image = imread(data_ir[i], True)
+    # vi_image = imread(data_vi[i], True)
 
-    ir_image = imread(data_ir[i], True)
-    vi_image = imread(data_vi[i], True)
+    # 对图像进行高斯滤波
+    # ir_blur = cv2.GaussianBlur(ir_image.astype(np.uint8), (7, 7), 0)
+    # vi_blur = cv2.GaussianBlur(vi_image.astype(np.uint8), (7, 7), 0)
+    # cv2.imshow('ir_blur', ir_blur)
+    # cv2.imshow('vi_blur', vi_blur)
+    # ir_blur_path = os.path.join(os.getcwd(), 'IR_BLUR', str(i) + ".bmp")
+    # vi_blur_path = os.path.join(os.getcwd(), 'VIS_BLUR', str(i) + ".bmp")
+    # cv2.imwrite(ir_blur_path, ir_blur)
+    # cv2.imwrite(vi_blur_path, vi_blur)
+
+    src_image = imread(data_test[i], True)
+    test_image, test_high = tikhonov_filter(src_image, 3, 16)
+    height, width = test_image.shape
+    height_remainder = height % 32
+    width_remainder = width % 32
+    size = (width - width_remainder, height - height_remainder)
+    test_image = cv2.resize(test_image, size)
+    input_image = (test_image - 127.5) / 127.5
+
     # 得到合并后的低频图像
-    combine_low = decomp_combine_image(ir_image, vi_image)
-    height, width = combine_low.shape
-    size = (int(width * 0.35), int(height * 0.35))
-    input_image = cv2.resize(combine_low, size)
+    # combine_low = decomp_combine_image(ir_image, vi_image)
+    # input_image = combine_low
     input_image = np.expand_dims(input_image, axis=0)
     input_image = np.expand_dims(input_image, axis=3)
     input_image = torch.FloatTensor(input_image)
@@ -203,16 +230,28 @@ for i in range(0, len(data_ir)):
     # 将生成的variable数据转成numpy类型
     # 查看生成的图片以及低频、高频区域
     result = result.squeeze().cpu().detach().numpy()
-    image_path = os.path.join(os.getcwd(), 'result_0509', 'epoch' + str(ep))
+    image_path = os.path.join(os.getcwd(), 'result_0520', 'epoch' + str(ep))
 
     if not os.path.exists(image_path):
         os.makedirs(image_path)
     if i <= 9:
+        src_path = os.path.join(image_path, 'src_0' + str(i) + ".bmp")
         result_path = os.path.join(image_path, 'result_0'+str(i)+".bmp")
+        origin_high = os.path.join(image_path, 'origin_high_0' + str(i) + ".bmp")
+        high_path = os.path.join(image_path, 'high_0' + str(i) + ".bmp")
+        low_path = os.path.join(image_path, 'low_0' + str(i) + ".bmp")
     else:
+        src_path = os.path.join(image_path, 'src_' + str(i) + ".bmp")
         result_path = os.path.join(image_path, 'result_'+str(i)+".bmp")
+        origin_high = os.path.join(image_path, 'origin_high_' + str(i) + ".bmp")
+        high_path = os.path.join(image_path, 'high_' + str(i) + ".bmp")
+        low_path = os.path.join(image_path, 'low_' + str(i) + ".bmp")
     end = time.time()
     # print(out.shape)
+    imsave(src_image, src_path)
     imsave(result.astype(np.uint8), result_path)
+    imsave((result-test_image).astype(np.uint8), high_path)
+    imsave(test_image.astype(np.uint8), low_path)
+    imsave(test_high.astype(np.uint8), origin_high)
     print(end - start)
     # print("Testing [%d] success, Testing time is [%f]" % (i, end-start))
